@@ -73,6 +73,13 @@ func (a *Agent) GenerateStream(ctx context.Context, sessionID, userInput string)
 
 	// 3. Chain Orchestrator
 	if handled, output, err := a.codeChainOrchestrator(ctx, sessionID, userInput); handled {
+		if err == nil && a.Guardrails != nil {
+			validated, gErr := a.Guardrails.ValidateAndRepair(ctx, output)
+			if gErr != nil {
+				return immediateStream("", gErr)
+			}
+			output = validated
+		}
 		return immediateStream(output, err)
 	}
 
@@ -110,23 +117,51 @@ func (a *Agent) GenerateStream(ctx context.Context, sessionID, userInput string)
 
 	// Wrap the stream to intercept and store memory
 	outCh := make(chan models.StreamChunk)
-	go func() {
-		defer close(outCh)
-		var full strings.Builder
-		for chunk := range stream {
-			if chunk.Err != nil {
-				outCh <- chunk
+
+	if a.Guardrails != nil {
+		go func() {
+			defer close(outCh)
+			var full strings.Builder
+			for chunk := range stream {
+				if chunk.Err != nil {
+					outCh <- chunk
+					return
+				}
+				if chunk.Delta != "" {
+					full.WriteString(chunk.Delta)
+				}
+			}
+
+			finalText := full.String()
+			validatedText, gErr := a.Guardrails.ValidateAndRepair(ctx, finalText)
+			if gErr != nil {
+				outCh <- models.StreamChunk{Err: gErr, Done: true}
 				return
 			}
-			if chunk.Delta != "" {
-				full.WriteString(chunk.Delta)
+
+			// Stream out the validated text as one chunk
+			outCh <- models.StreamChunk{Delta: validatedText, FullText: validatedText, Done: true}
+			a.storeMemory(sessionID, "assistant", validatedText, nil)
+		}()
+	} else {
+		go func() {
+			defer close(outCh)
+			var full strings.Builder
+			for chunk := range stream {
+				if chunk.Err != nil {
+					outCh <- chunk
+					return
+				}
+				if chunk.Delta != "" {
+					full.WriteString(chunk.Delta)
+				}
+				outCh <- chunk
 			}
-			outCh <- chunk
-		}
-		// Store memory after completion
-		finalText := full.String()
-		a.storeMemory(sessionID, "assistant", finalText, nil)
-	}()
+			// Store memory after completion
+			finalText := full.String()
+			a.storeMemory(sessionID, "assistant", finalText, nil)
+		}()
+	}
 
 	return outCh, nil
 }
