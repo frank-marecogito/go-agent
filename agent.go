@@ -60,6 +60,7 @@ type Agent struct {
 	CodeChain *chain.UtcpChainClient
 
 	AllowUnsafeTools bool
+	Guardrails       *OutputGuardrails
 }
 
 // Options configure a new Agent.
@@ -77,6 +78,7 @@ type Options struct {
 	Shared            *memory.SharedSession
 	CodeChain         *chain.UtcpChainClient
 	AllowUnsafeTools  bool
+	Guardrails        *OutputGuardrails
 }
 
 // New creates an Agent with the provided options.
@@ -146,6 +148,7 @@ func New(opts Options) (*Agent, error) {
 		CodeMode:          opts.CodeMode,
 		CodeChain:         opts.CodeChain,
 		AllowUnsafeTools:  opts.AllowUnsafeTools,
+		Guardrails:        opts.Guardrails,
 	}
 
 	return a, nil
@@ -1214,7 +1217,17 @@ func (a *Agent) Generate(ctx context.Context, sessionID, userInput string) (any,
 	// 3. Chain Orchestrator (LLM decides a multi-step chain execution)
 	// -------------------------------------------------------------
 	if handled, output, err := a.codeChainOrchestrator(ctx, sessionID, userInput); handled {
-		return output, err
+		if err != nil {
+			return "", err
+		}
+		if a.Guardrails != nil {
+			validated, gErr := a.Guardrails.ValidateAndRepair(ctx, output)
+			if gErr != nil {
+				return "", gErr
+			}
+			return validated, nil
+		}
+		return output, nil
 	}
 	// ---------------------------------------------
 	// 4. TOOL ORCHESTRATOR (normal UTCP tools)
@@ -1270,7 +1283,17 @@ func (a *Agent) Generate(ctx context.Context, sessionID, userInput string) (any,
 		return "", err
 	}
 
-	a.storeMemory(sessionID, "assistant", fmt.Sprintf("%s", completion), nil)
+	finalText := fmt.Sprint(completion)
+	if a.Guardrails != nil {
+		validatedText, gErr := a.Guardrails.ValidateAndRepair(ctx, finalText)
+		if gErr != nil {
+			return "", gErr
+		}
+		finalText = validatedText
+		completion = finalText
+	}
+
+	a.storeMemory(sessionID, "assistant", finalText, nil)
 	return completion, nil
 }
 

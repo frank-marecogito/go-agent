@@ -62,3 +62,41 @@ type AgentState struct {
 	JoinedSpaces []string                        `json:"joined_spaces,omitempty"`
 	Timestamp    time.Time                       `json:"timestamp"`
 }
+
+// SafetyPolicy defines an interface for validating LLM responses.
+type SafetyPolicy interface {
+	Validate(ctx context.Context, response string) error
+}
+
+// FormatEnforcer defines an interface for validating or repairing the format of LLM responses.
+type FormatEnforcer interface {
+	Enforce(ctx context.Context, response string) (string, error)
+}
+
+// OutputGuardrails holds the policy engines and formatting rules.
+type OutputGuardrails struct {
+	SafetyPolicies  []SafetyPolicy
+	FormatEnforcers []FormatEnforcer
+}
+
+// ValidateAndRepair applies safety checks and format enforcing to the response.
+func (g *OutputGuardrails) ValidateAndRepair(ctx context.Context, response string) (string, error) {
+	if g == nil {
+		return response, nil
+	}
+	for _, policy := range g.SafetyPolicies {
+		if err := policy.Validate(ctx, response); err != nil {
+			return "", err
+		}
+	}
+
+	final := response
+	var err error
+	for _, enforcer := range g.FormatEnforcers {
+		final, err = enforcer.Enforce(ctx, final)
+		if err != nil {
+			return "", err
+		}
+	}
+	return final, nil
+}
