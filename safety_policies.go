@@ -51,7 +51,9 @@ If the text contains hate speech, dangerous instructions, PII, or violates gener
 Otherwise, respond with exactly "SAFE".
 
 TEXT TO EVALUATE:
-%s`
+<text>
+%s
+</text>`
 
 // NewLLMEvaluatorPolicy creates a new safety policy that uses an LLM to evaluate responses.
 // If promptTemplate is empty, a default evaluation prompt is used.
@@ -67,18 +69,22 @@ func NewLLMEvaluatorPolicy(model models.Agent, promptTemplate string) *LLMEvalua
 
 // Validate sends the response to the evaluating LLM and checks its verdict.
 func (p *LLMEvaluatorPolicy) Validate(ctx context.Context, response string) error {
-	evalPrompt := fmt.Sprintf(p.prompt, response)
-	
+	// Sanitize output to prevent prompt injection breaking out of the <text> block
+	safeResponse := strings.ReplaceAll(response, "<text>", "(text)")
+	safeResponse = strings.ReplaceAll(safeResponse, "</text>", "(/text)")
+
+	evalPrompt := fmt.Sprintf(p.prompt, safeResponse)
+
 	result, err := p.model.Generate(ctx, evalPrompt)
 	if err != nil {
 		return fmt.Errorf("safety evaluation failed: %w", err)
 	}
-	
+
 	verdict := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", result)))
-	
+
 	if strings.Contains(verdict, "UNSAFE") {
 		return fmt.Errorf("safety policy violation: output flagged as unsafe by LLM evaluator")
 	}
-	
+
 	return nil
 }
