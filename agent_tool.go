@@ -103,6 +103,26 @@ func (t *agentCLITransport) DeregisterToolProvider(ctx context.Context, prov bas
 }
 
 func (t *agentCLITransport) CallTool(ctx context.Context, toolName string, args map[string]any, prov base.Provider, _ *string) (any, error) {
+	// 如果 prov 为空，尝试从 toolName 推断 provider（如 "expert.researcher" → "expert"）
+	if prov == nil {
+		if parts := strings.Split(toolName, "."); len(parts) > 1 {
+			providerName := parts[0]
+			if list, ok := t.tools[providerName]; ok {
+				for _, tool := range list {
+					if tool.Name == toolName {
+						if tool.Handler == nil {
+							return nil, fmt.Errorf("tool %s has no handler", toolName)
+						}
+						return tool.Handler(ctx, args)
+					}
+				}
+				return nil, fmt.Errorf("tool %s not found in provider %s", toolName, providerName)
+			}
+		}
+		return nil, fmt.Errorf("tool %s not found (no provider specified)", toolName)
+	}
+	
+	// 原有逻辑：使用提供的 Provider
 	if p, ok := prov.(*cli.CliProvider); ok {
 		if list, ok := t.tools[p.Name]; ok {
 			for _, tool := range list {
@@ -289,7 +309,8 @@ func (a *Agent) RegisterAsUTCPProvider(ctx context.Context, client utcp.UtcpClie
 	if shim.tools == nil {
 		shim.tools = make(map[string][]tools.Tool)
 	}
-	shim.tools[tp.Name] = []tools.Tool{tool}
+	// 追加工具到现有列表，而不是覆盖
+	shim.tools[tp.Name] = append(shim.tools[tp.Name], tool)
 
 	_, err := client.RegisterToolProvider(ctx, tp)
 	return err

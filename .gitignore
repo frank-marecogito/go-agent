@@ -1,0 +1,58 @@
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+/bin/
+/dist/
+/validator
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Cache
+.agent_cache.json
+*.cache
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Demo examples (experimental/test code)
+cmd/example/5ways_demo/
+cmd/example/hybrid_memory_test/
+cmd/example/shared_session_test/
+cmd/example/multi_agent_memory/
+
+# Orchestration and validator tools
+cmd/orchestrate/
+cmd/validator/
+
+# Documentation (external guides)
+docs/
+
+# Multi-agent memory (legacy test at root level - binary or directory)
+/multi_agent_memory
+/multi_agent_memory/
+
+# DeepSeek model helper (external - not part of core go-agent)
+# Note: src/models/deepseek.go should be committed separately if needed
+src/models/deepseek.go
+
+# Ignore all untracked files except core modifications
+# Core modifications to keep:
+# - agent_tool.go (UTCP tool registration fix)
+# - cmd/example/main.go (memory flush fix)
+# - src/models/helper.go (DeepSeek provider support)

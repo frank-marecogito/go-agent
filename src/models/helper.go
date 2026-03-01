@@ -54,6 +54,8 @@ func NewLLMProvider(ctx context.Context, provider string, model string, promptPr
 	switch provider {
 	case "openai":
 		agent = NewOpenAILLM(model, promptPrefix)
+	case "deepseek":
+		agent = NewDeepSeekLLM(model, promptPrefix)
 	case "gemini", "google":
 		agent, err = NewGeminiLLM(ctx, model, promptPrefix)
 	case "ollama":

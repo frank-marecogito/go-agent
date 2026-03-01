@@ -128,6 +128,11 @@ func main() {
 		fail(err)
 	}
 
+	// Flush memories to PostgreSQL (persist short-term memory to long-term storage)
+	if err := ag.Flush(ctx, *flagSession); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to flush memories: %v\n", err)
+	}
+
 	// 6) Print
 	if *flagJSON {
 		enc := json.NewEncoder(os.Stdout)
