@@ -1,0 +1,179 @@
+package models
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/sashabaranov/go-openai"
+)
+
+const deepseekBaseURL = "https://api.deepseek.com"
+
+type DeepSeekLLM struct {
+	Client       *openai.Client
+	Model        string
+	PromptPrefix string
+}
+
+func NewDeepSeekLLM(model string, promptPrefix string) *DeepSeekLLM {
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY") // fallback
+	}
+
+	config := openai.DefaultConfig(apiKey)
+	config.BaseURL = deepseekBaseURL
+
+	client := openai.NewClientWithConfig(config)
+	return &DeepSeekLLM{Client: client, Model: model, PromptPrefix: promptPrefix}
+}
+
+func (d *DeepSeekLLM) Generate(ctx context.Context, prompt string) (any, error) {
+	fullPrompt := prompt
+	if d.PromptPrefix != "" {
+		fullPrompt = d.PromptPrefix + "\n" + prompt
+	}
+
+	resp, err := d.Client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: d.Model,
+		Messages: []openai.ChatCompletionMessage{{
+			Role:    openai.ChatMessageRoleUser,
+			Content: fullPrompt,
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, errors.New("no response from DeepSeek")
+	}
+	return resp.Choices[0].Message.Content, nil
+}
+
+func (d *DeepSeekLLM) GenerateStream(ctx context.Context, prompt string) (<-chan StreamChunk, error) {
+	fullPrompt := prompt
+	if d.PromptPrefix != "" {
+		fullPrompt = d.PromptPrefix + "\n" + prompt
+	}
+
+	stream, err := d.Client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
+		Model: d.Model,
+		Messages: []openai.ChatCompletionMessage{{
+			Role:    openai.ChatMessageRoleUser,
+			Content: fullPrompt,
+		}},
+		Stream: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan StreamChunk, 16)
+	go func() {
+		defer close(ch)
+		defer stream.Close()
+		var sb strings.Builder
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					ch <- StreamChunk{Done: true, FullText: sb.String()}
+					return
+				}
+				ch <- StreamChunk{Done: true, FullText: sb.String(), Err: err}
+				return
+			}
+			if len(resp.Choices) > 0 {
+				delta := resp.Choices[0].Delta.Content
+				if delta != "" {
+					sb.WriteString(delta)
+					ch <- StreamChunk{Delta: delta}
+				}
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+func (d *DeepSeekLLM) GenerateWithFiles(ctx context.Context, prompt string, files []File) (any, error) {
+	fullPrompt := prompt
+	if d.PromptPrefix != "" {
+		fullPrompt = d.PromptPrefix + "\n" + prompt
+	}
+
+	// Separate files by type
+	var textFiles []File
+	var mediaFiles []File
+
+	for _, f := range files {
+		mt := normalizeMIME(f.Name, f.MIME)
+
+		if isImageOrVideoMIME(mt) && getOpenAIMimeType(mt) != "" {
+			mediaFiles = append(mediaFiles, f)
+		} else if isTextMIME(mt) {
+			textFiles = append(textFiles, f)
+		}
+	}
+
+	// If no media files, fall back to text-only approach
+	if len(mediaFiles) == 0 {
+		combined := combinePromptWithFiles(fullPrompt, textFiles)
+		return d.Generate(ctx, combined)
+	}
+
+	// Build MultiContent message with text and media
+	var contentParts []openai.ChatMessagePart
+
+	textPrompt := fullPrompt
+	if len(textFiles) > 0 {
+		textPrompt = combinePromptWithFiles(fullPrompt, textFiles)
+	}
+
+	contentParts = append(contentParts, openai.ChatMessagePart{
+		Type: openai.ChatMessagePartTypeText,
+		Text: textPrompt,
+	})
+
+	// Add media files
+	for _, f := range mediaFiles {
+		mt := normalizeMIME(f.Name, f.MIME)
+		openaiMime := getOpenAIMimeType(mt)
+		if openaiMime == "" {
+			continue
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(f.Data)
+		dataURL := fmt.Sprintf("data:%s;base64,%s", openaiMime, encoded)
+
+		if strings.HasPrefix(openaiMime, "image/") {
+			contentParts = append(contentParts, openai.ChatMessagePart{
+				Type: openai.ChatMessagePartTypeImageURL,
+				ImageURL: &openai.ChatMessageImageURL{
+					URL:    dataURL,
+					Detail: openai.ImageURLDetailAuto,
+				},
+			})
+		}
+	}
+
+	resp, err := d.Client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: d.Model,
+		Messages: []openai.ChatCompletionMessage{{
+			Role:         openai.ChatMessageRoleUser,
+			MultiContent: contentParts,
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, errors.New("no response from DeepSeek")
+	}
+	return resp.Choices[0].Message.Content, nil
+}
