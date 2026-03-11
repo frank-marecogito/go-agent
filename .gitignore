@@ -1,0 +1,21 @@
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+hello-agent
+
+# 测试覆盖率
+coverage.out
+
+# 依赖目录
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
