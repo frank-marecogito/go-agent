@@ -60,8 +60,10 @@ func NewLLMProvider(ctx context.Context, provider string, model string, promptPr
 		agent, err = NewOllamaLLM(model, promptPrefix)
 	case "anthropic", "claude":
 		agent = NewAnthropicLLM(model, promptPrefix)
+	case "deepseek":
+		agent = NewDeepSeekLLM(model, promptPrefix)
 	default:
-		return nil, fmt.Errorf("unknown provider: %s", provider)
+		return nil, fmt.Errorf("unknown provider: %s. Available providers: openai, gemini/google, ollama, anthropic/claude, deepseek", provider)
 	}
 
 	if err != nil {
